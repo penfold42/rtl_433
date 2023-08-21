@@ -152,6 +152,10 @@ static int radiohead_ask_callback(r_device *decoder, bitbuffer_t *bitbuffer)
     if (data_len <= 0)
         return DECODE_FAIL_SANITY;
 
+    if ( !strncmp((char*)&rh_payload[5], "MPU6050", 7) && (data_len==21) ) {
+	return(0);	// handled more specifically
+    }
+
     header_to    = rh_payload[1];
     header_from  = rh_payload[2];
     header_id    = rh_payload[3];
@@ -223,6 +227,76 @@ static int sensible_living_callback(r_device *decoder, bitbuffer_t *bitbuffer)
     return 1;
 }
 
+/**
+Arduino accelgyro protocol
+
+@todo Documentation needed.
+*/
+static int accelgyro_callback(r_device *decoder, bitbuffer_t *bitbuffer)
+{
+    data_t *data;
+    uint8_t row = 0; // we are considering only first row
+
+// Unused for now
+//  int data_len, header_to, header_from, header_flags;
+
+    int header_id;
+    int16_t msg_len;
+
+    float accelx, accely, accelz;
+    float gyrox, gyroy, gyroz;
+    float tempC;
+
+    uint8_t rh_payload[RH_ASK_MAX_PAYLOAD_LEN] = {0};
+
+    msg_len = radiohead_ask_extract(decoder, bitbuffer, row, rh_payload);
+    if (msg_len <= 0) {
+        return msg_len; // pass error code on
+    }
+
+// Unused for now
+//  header_to    = rh_payload[1];
+//  header_from  = rh_payload[2];
+    header_id    = rh_payload[3];
+//  header_flags = rh_payload[4];
+
+    char device[16] = {0};
+    memcpy (device, (char *)&rh_payload[5], 7);
+
+    if (strncmp(device, "MPU6050", 7)) {
+	return(0);
+    }
+
+    int i=5+7;	// 5 RH header and 7 device chars
+    int16_t t;
+    t = (rh_payload[i] << 8) + rh_payload[i+1]; i+=2; accelx = t/1000.0;
+    t = (rh_payload[i] << 8) + rh_payload[i+1]; i+=2; accely = t/1000.0;
+    t = (rh_payload[i] << 8) + rh_payload[i+1]; i+=2; accelz = t/1000.0;
+    t = (rh_payload[i] << 8) + rh_payload[i+1]; i+=2; gyrox  = t/900.0;
+    t = (rh_payload[i] << 8) + rh_payload[i+1]; i+=2; gyroy  = t/900.0;
+    t = (rh_payload[i] << 8) + rh_payload[i+1]; i+=2; gyroz  = t/900.0;
+    t = (rh_payload[i] << 8) + rh_payload[i+1]; i+=2; tempC  = t/100.0;
+
+    /* clang-format off */
+    data = data_make(
+            "seq",    "Sequence",     DATA_INT,  header_id,
+            "model",       "",     DATA_STRING, "RadioHead-ASK",
+            "device",      "Device",     DATA_STRING,  device,
+            "tempC",  "Temperature",  DATA_FORMAT,    "%.01f C",  DATA_DOUBLE, tempC,
+            "accelx", "Accel-X",  DATA_DOUBLE,  accelx,
+            "accely", "Accel-Y",  DATA_DOUBLE,  accely,
+            "accelz", "Accel-Z",  DATA_DOUBLE,  accelz,
+            "gyrox",  "Gyro-X",   DATA_DOUBLE,  gyrox,
+            "gyroy",  "Gyro-Y",   DATA_DOUBLE,  gyroy,
+            "gyroz",  "Gyro-Z",   DATA_DOUBLE,  gyroz,
+            "mic",     "Integrity",      DATA_STRING,  "CRC",
+            NULL);
+    /* clang-format on */
+
+    decoder_output_data(decoder, data);
+    return 1;
+}
+
 static char const *const radiohead_ask_output_fields[] = {
         "model",
         "len",
@@ -248,6 +322,21 @@ static char const *const sensible_living_output_fields[] = {
         NULL,
 };
 
+static char const *const accelgyro_output_fields[] = {
+        "model",
+        "device",
+        "seq",
+        "tempC",
+        "accelx",
+        "accely",
+        "accelz",
+        "gyrox",
+        "gyroy",
+        "gyroz",
+        "mic",
+        NULL,
+};
+
 r_device const radiohead_ask = {
         .name        = "Radiohead ASK",
         .modulation  = OOK_PULSE_PCM,
@@ -266,4 +355,14 @@ r_device const sensible_living = {
         .reset_limit = 5 * 1000,
         .decode_fn   = &sensible_living_callback,
         .fields      = sensible_living_output_fields,
+};
+
+r_device const AccelGyro = {
+        .name        = "433 Gyro Accelerometer",
+        .modulation  = OOK_PULSE_PCM,
+        .short_width = 500,
+        .long_width  = 500,
+        .reset_limit = 5 * 500,
+        .decode_fn   = &accelgyro_callback,
+        .fields      = accelgyro_output_fields,
 };
